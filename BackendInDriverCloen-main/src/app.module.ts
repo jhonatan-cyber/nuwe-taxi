@@ -25,11 +25,11 @@ import { ConfigService } from '@nestjs/config';
       useFactory: (configService: ConfigService) => {
         const username = configService.getOrThrow<string>('DB_USERNAME');
         if (username.toLowerCase() === 'root') {
-          throw new Error('Configure una cuenta MySQL de privilegios mínimos en DB_USERNAME');
+          throw new Error('Configure una cuenta PostgreSQL de privilegios mínimos en DB_USERNAME');
         }
 
         return {
-          type: 'mysql' as const,
+          type: 'postgres' as const,
           host: configService.getOrThrow<string>('DB_HOST'),
           port: Number(configService.getOrThrow<string>('DB_PORT')),
           username,

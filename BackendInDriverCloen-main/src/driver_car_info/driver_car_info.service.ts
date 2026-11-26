@@ -25,7 +25,7 @@ export class DriverCarInfoService {
         if (!(roles.includes(JwtRole.DRIVER) && requesterId === id_driver)) {
             const [request] = await this.driverCarInfoRepository.query(`
                 SELECT id FROM client_requests
-                WHERE id_client = ? AND id_driver_assigned = ? AND status IN (?, ?, ?, ?)
+                WHERE id_client = $1 AND id_driver_assigned = $2 AND status IN ($3, $4, $5, $6)
                 LIMIT 1
             `, [requesterId, id_driver, Status.ACCEPTED, Status.ON_THE_WAY, Status.ARRIVED, Status.TRAVELLING]);
             if (!request) throw new ForbiddenException();

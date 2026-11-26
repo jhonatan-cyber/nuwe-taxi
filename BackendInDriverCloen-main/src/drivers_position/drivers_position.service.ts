@@ -17,9 +17,9 @@ export class DriversPositionService {
         this.assertCoordinates(driverPosition.lat, driverPosition.lng);
         await this.driversPositionRepository.query(`
             INSERT INTO drivers_position (id_driver, position)
-            VALUES (?, ST_GeomFromText(?, 4326))
-            ON DUPLICATE KEY UPDATE position = VALUES(position)
-        `, [driverId, `POINT(${driverPosition.lat} ${driverPosition.lng})`]);
+            VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography)
+            ON CONFLICT (id_driver) DO UPDATE SET position = EXCLUDED.position
+        `, [driverId, driverPosition.lng, driverPosition.lat]);
         return true;
     }
 
@@ -27,14 +27,14 @@ export class DriversPositionService {
         if (!(roles.includes(JwtRole.DRIVER) && requesterId === id_driver)) {
             const [request] = await this.driversPositionRepository.query(`
                 SELECT id FROM client_requests
-                WHERE id_client = ? AND id_driver_assigned = ? AND status IN (?, ?, ?, ?)
+                WHERE id_client = $1 AND id_driver_assigned = $2 AND status IN ($3, $4, $5, $6)
                 LIMIT 1
             `, [requesterId, id_driver, Status.ACCEPTED, Status.ON_THE_WAY, Status.ARRIVED, Status.TRAVELLING]);
             if (!request) throw new ForbiddenException();
         }
         const [driverPosition] = await this.driversPositionRepository.query(`
-            SELECT id_driver, ST_Y(position) AS lat, ST_X(position) AS lng
-            FROM drivers_position WHERE id_driver = ?
+            SELECT id_driver, ST_Y(position::geometry) AS lat, ST_X(position::geometry) AS lng
+            FROM drivers_position WHERE id_driver = $1
         `, [id_driver]);
         if (!driverPosition) throw new NotFoundException('Ubicación no disponible');
         return {
@@ -48,12 +48,12 @@ export class DriversPositionService {
         const driversPosition = await this.driversPositionRepository.query(`
             SELECT
                 CR.id_driver_assigned AS id_driver,
-                ST_Y(DP.position) AS lat,
-                ST_X(DP.position) AS lng
+                ST_Y(DP.position::geometry) AS lat,
+                ST_X(DP.position::geometry) AS lng
             FROM
                 client_requests AS CR
             INNER JOIN drivers_position AS DP ON DP.id_driver = CR.id_driver_assigned
-            WHERE CR.id_client = ? AND CR.status IN (?, ?, ?, ?)
+            WHERE CR.id_client = $1 AND CR.status IN ($2, $3, $4, $5)
         `, [clientId, Status.ACCEPTED, Status.ON_THE_WAY, Status.ARRIVED, Status.TRAVELLING]);
         return driversPosition;
     }

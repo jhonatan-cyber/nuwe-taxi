@@ -37,23 +37,33 @@ export class ClientRequestsService  extends Client {
                         pickup_position,
                         destination_position
                     )
-                VALUES(?, ?, ?, ?, ST_GeomFromText(?, 4326), ST_GeomFromText(?, 4326))
+                VALUES(
+                    $1, $2, $3, $4,
+                    ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography,
+                    ST_SetSRID(ST_MakePoint($7, $8), 4326)::geography
+                )
+                RETURNING id
             `, [
                 clientId,
                 clientRequest.fare_offered,
                 clientRequest.pickup_description,
                 clientRequest.destination_description,
-                `POINT(${clientRequest.pickup_lat} ${clientRequest.pickup_lng})`,
-                `POINT(${clientRequest.destination_lat} ${clientRequest.destination_lng})`,
+                clientRequest.pickup_lng,
+                clientRequest.pickup_lat,
+                clientRequest.destination_lng,
+                clientRequest.destination_lat,
             ]);
-            const requestId = Number(inserted.insertId);
+            const requestId = Number(inserted[0].id);
             const nearbyDrivers = await this.clientRequestsRepository.query(`
             SELECT
                 U.id,
                 U.name,
                 U.notification_token,
                 DP.position,
-                ST_Distance_Sphere(DP.position, ST_GeomFromText(?, 4326)) AS distance
+                ST_Distance(
+                    DP.position,
+                    ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+                ) AS distance
             FROM
                 users AS U
             LEFT JOIN
@@ -69,11 +79,15 @@ export class ClientRequestsService  extends Client {
             ON
                 R.id = UHR.id_rol
             WHERE
-                R.id = ?
-            HAVING
-                distance < ?
+                R.id = $3
+                AND ST_DWithin(
+                    DP.position,
+                    ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+                    $4
+                )
             `, [
-                `POINT(${clientRequest.pickup_lat} ${clientRequest.pickup_lng})`,
+                clientRequest.pickup_lng,
+                clientRequest.pickup_lat,
                 JwtRole.DRIVER,
                 10000,
             ]);
@@ -118,20 +132,21 @@ export class ClientRequestsService  extends Client {
                 UPDATE
                     client_requests
                 SET
-                    id_driver_assigned = ?,
-                    status = ?,
+                    id_driver_assigned = $1,
+                    status = $2,
                     updated_at = NOW(),
-                    fare_assigned = ?
+                    fare_assigned = $3
                 WHERE
-                    id = ?
-                    AND id_client = ?
-                    AND status = ?
+                    id = $4
+                    AND id_client = $5
+                    AND status = $6
                     AND EXISTS (
                         SELECT 1 FROM driver_trip_offers AS DTO
-                        WHERE DTO.id_client_request = ?
-                          AND DTO.id_driver = ?
-                          AND DTO.fare_offered = ?
+                        WHERE DTO.id_client_request = $7
+                          AND DTO.id_driver = $8
+                          AND DTO.fare_offered = $9
                     )
+                RETURNING id
             `, [
                 driverAssigned.id_driver_assigned,
                 Status.ACCEPTED,
@@ -143,7 +158,7 @@ export class ClientRequestsService  extends Client {
                 driverAssigned.id_driver_assigned,
                 driverAssigned.fare_assigned,
             ]);
-            return result.affectedRows > 0;
+            return result.length > 0;
         } catch (error) {
             throw new HttpException('Error del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -172,17 +187,19 @@ export class ClientRequestsService  extends Client {
                 UPDATE
                     client_requests
                 SET
-                    status = ?,
+                    status = $1,
                     updated_at = NOW()
                 WHERE
-                    id = ? AND id_client = ? AND status IN (?, ?)
+                    id = $2 AND id_client = $3 AND status IN ($4, $5)
+                RETURNING id
             `, [updateStatusDto.status, updateStatusDto.id_client_request, userId, Status.CREATED, Status.ACCEPTED])
                 : await this.clientRequestsRepository.query(`
                 UPDATE client_requests
-                SET status = ?, updated_at = NOW()
-                WHERE id = ? AND id_driver_assigned = ? AND status = ?
+                SET status = $1, updated_at = NOW()
+                WHERE id = $2 AND id_driver_assigned = $3 AND status = $4
+                RETURNING id
             `, [updateStatusDto.status, updateStatusDto.id_client_request, userId, previousStatus]);
-            return result.affectedRows > 0;
+            return result.length > 0;
         } catch (error) {
             if (error instanceof HttpException) throw error;
             throw new HttpException('Error del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
@@ -195,12 +212,13 @@ export class ClientRequestsService  extends Client {
                 UPDATE
                     client_requests
                 SET
-                    driver_rating = ?,
+                    driver_rating = $1,
                     updated_at = NOW()
                 WHERE
-                    id = ? AND id_client = ? AND status = ? AND driver_rating IS NULL
+                    id = $2 AND id_client = $3 AND status = $4 AND driver_rating IS NULL
+                RETURNING id
             `, [driverRating.driver_rating, driverRating.id_client_request, clientId, Status.FINISHED]);
-            return result.affectedRows > 0;
+            return result.length > 0;
         } catch (error) {
             throw new HttpException('Error del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -212,12 +230,13 @@ export class ClientRequestsService  extends Client {
                 UPDATE
                     client_requests
                 SET
-                    client_rating = ?,
+                    client_rating = $1,
                     updated_at = NOW()
                 WHERE
-                    id = ? AND id_driver_assigned = ? AND status = ? AND client_rating IS NULL
+                    id = $2 AND id_driver_assigned = $3 AND status = $4 AND client_rating IS NULL
+                RETURNING id
             `, [driverRating.client_rating, driverRating.id_client_request, driverId, Status.FINISHED]);
-            return result.affectedRows > 0;
+            return result.length > 0;
         } catch (error) {
             throw new HttpException('Error del servidor', HttpStatus.INTERNAL_SERVER_ERROR);
         }
@@ -233,26 +252,32 @@ export class ClientRequestsService  extends Client {
             CR.destination_description,
             CR.status,
             CR.updated_at,
-            CR.pickup_position,
-            CR.destination_position,
+            json_build_object(
+                'x', ST_X(CR.pickup_position::geometry),
+                'y', ST_Y(CR.pickup_position::geometry)
+            ) AS pickup_position,
+            json_build_object(
+                'x', ST_X(CR.destination_position::geometry),
+                'y', ST_Y(CR.destination_position::geometry)
+            ) AS destination_position,
             CR.fare_assigned,
             CR.id_driver_assigned,
-            JSON_OBJECT(
-                "name", U.name,
-                "lastname", U.lastname,
-                "phone", U.phone,
-                "image", U.image
+            json_build_object(
+                'name', U.name,
+                'lastname', U.lastname,
+                'phone', U.phone,
+                'image', U.image
             ) AS client,
-            JSON_OBJECT(
-                "name", D.name,
-                "lastname", D.lastname,
-                "phone", D.phone,
-                "image", D.image
+            json_build_object(
+                'name', D.name,
+                'lastname', D.lastname,
+                'phone', D.phone,
+                'image', D.image
             ) AS driver,
-            JSON_OBJECT(
-                "brand", DCI.brand,
-                "plate", DCI.plate,
-                "color", DCI.color
+            json_build_object(
+                'brand', DCI.brand,
+                'plate', DCI.plate,
+                'color', DCI.color
             ) AS car
         FROM 
             client_requests AS CR
@@ -269,7 +294,7 @@ export class ClientRequestsService  extends Client {
         ON
             DCI.id_driver = CR.id_driver_assigned
         WHERE
-            CR.id = ? AND CR.status = ? AND (CR.id_client = ? OR CR.id_driver_assigned = ?)
+            CR.id = $1 AND CR.status = $2 AND (CR.id_client = $3 OR CR.id_driver_assigned = $4)
         `, [id_client_request, Status.ACCEPTED, userId, userId]);
         if (data.length === 0) throw new NotFoundException('Solicitud no encontrada');
         return {
@@ -292,28 +317,34 @@ export class ClientRequestsService  extends Client {
             CR.status,
             CR.updated_at,
             CR.created_at,
-            CR.pickup_position,
-            CR.destination_position,
+            json_build_object(
+                'x', ST_X(CR.pickup_position::geometry),
+                'y', ST_Y(CR.pickup_position::geometry)
+            ) AS pickup_position,
+            json_build_object(
+                'x', ST_X(CR.destination_position::geometry),
+                'y', ST_Y(CR.destination_position::geometry)
+            ) AS destination_position,
             CR.fare_assigned,
             CR.id_driver_assigned,
             CR.driver_rating,
             CR.client_rating,
-            JSON_OBJECT(
-                "name", U.name,
-                "lastname", U.lastname,
-                "phone", U.phone,
-                "image", U.image
+            json_build_object(
+                'name', U.name,
+                'lastname', U.lastname,
+                'phone', U.phone,
+                'image', U.image
             ) AS client,
-            JSON_OBJECT(
-                "name", D.name,
-                "lastname", D.lastname,
-                "phone", D.phone,
-                "image", D.image
+            json_build_object(
+                'name', D.name,
+                'lastname', D.lastname,
+                'phone', D.phone,
+                'image', D.image
             ) AS driver,
-            JSON_OBJECT(
-                "brand", DCI.brand,
-                "plate", DCI.plate,
-                "color", DCI.color
+            json_build_object(
+                'brand', DCI.brand,
+                'plate', DCI.plate,
+                'color', DCI.color
             ) AS car
         FROM 
             client_requests AS CR
@@ -330,7 +361,7 @@ export class ClientRequestsService  extends Client {
         ON
             DCI.id_driver = CR.id_driver_assigned
         WHERE
-            CR.id_driver_assigned = ? AND CR.status = ?
+            CR.id_driver_assigned = $1 AND CR.status = $2
         `, [id_driver, Status.FINISHED]);
         return data;
     }
@@ -346,28 +377,34 @@ export class ClientRequestsService  extends Client {
             CR.status,
             CR.updated_at,
             CR.created_at,
-            CR.pickup_position,
-            CR.destination_position,
+            json_build_object(
+                'x', ST_X(CR.pickup_position::geometry),
+                'y', ST_Y(CR.pickup_position::geometry)
+            ) AS pickup_position,
+            json_build_object(
+                'x', ST_X(CR.destination_position::geometry),
+                'y', ST_Y(CR.destination_position::geometry)
+            ) AS destination_position,
             CR.fare_assigned,
             CR.id_driver_assigned,
             CR.driver_rating,
             CR.client_rating,
-            JSON_OBJECT(
-                "name", U.name,
-                "lastname", U.lastname,
-                "phone", U.phone,
-                "image", U.image
+            json_build_object(
+                'name', U.name,
+                'lastname', U.lastname,
+                'phone', U.phone,
+                'image', U.image
             ) AS client,
-            JSON_OBJECT(
-                "name", D.name,
-                "lastname", D.lastname,
-                "phone", D.phone,
-                "image", D.image
+            json_build_object(
+                'name', D.name,
+                'lastname', D.lastname,
+                'phone', D.phone,
+                'image', D.image
             ) AS driver,
-            JSON_OBJECT(
-                "brand", DCI.brand,
-                "plate", DCI.plate,
-                "color", DCI.color
+            json_build_object(
+                'brand', DCI.brand,
+                'plate', DCI.plate,
+                'color', DCI.color
             ) AS car
         FROM 
             client_requests AS CR
@@ -384,7 +421,7 @@ export class ClientRequestsService  extends Client {
         ON
             DCI.id_driver = CR.id_driver_assigned
         WHERE
-            CR.id_client = ? AND CR.status = ?
+            CR.id_client = $1 AND CR.status = $2
         `, [id_client, Status.FINISHED]);
         return data;
     }
@@ -399,15 +436,24 @@ export class ClientRequestsService  extends Client {
             CR.destination_description,
             CR.status,
             CR.updated_at,
-            CR.pickup_position,
-            CR.destination_position,
-            DP.position AS driver_position,
-            ST_Distance_Sphere(CR.pickup_position, DP.position) AS distance,
-            timestampdiff(MINUTE, CR.updated_at, NOW()) AS time_difference,
-        JSON_OBJECT(
-            "name", U.name,
-            "lastname", U.lastname,
-            "image", U.image
+            json_build_object(
+                'x', ST_X(CR.pickup_position::geometry),
+                'y', ST_Y(CR.pickup_position::geometry)
+            ) AS pickup_position,
+            json_build_object(
+                'x', ST_X(CR.destination_position::geometry),
+                'y', ST_Y(CR.destination_position::geometry)
+            ) AS destination_position,
+            json_build_object(
+                'x', ST_X(DP.position::geometry),
+                'y', ST_Y(DP.position::geometry)
+            ) AS driver_position,
+            ST_Distance(CR.pickup_position, DP.position) AS distance,
+            EXTRACT(EPOCH FROM (NOW() - CR.updated_at)) / 60 AS time_difference,
+        json_build_object(
+            'name', U.name,
+            'lastname', U.lastname,
+            'image', U.image
         ) AS client
         FROM 
             client_requests AS CR
@@ -418,11 +464,11 @@ export class ClientRequestsService  extends Client {
         INNER JOIN
             drivers_position AS DP
         ON
-            DP.id_driver = ?
+            DP.id_driver = $1
         WHERE
-            timestampdiff(MINUTE, CR.updated_at, NOW()) < ? AND CR.status = ?
-        HAVING
-            distance < ?
+            CR.updated_at >= NOW() - ($2 * INTERVAL '1 minute')
+            AND CR.status = $3
+            AND ST_DWithin(CR.pickup_position, DP.position, $4)
         `, [driverId, 5000, Status.CREATED, 10000]);
         if(data.length > 0) {
             const pickup_positions = data.map(d => ({ 

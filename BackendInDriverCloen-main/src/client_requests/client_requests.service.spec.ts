@@ -8,7 +8,7 @@ describe('ClientRequestsService', () => {
     const injectedText = "pickup'); DROP TABLE users; --";
     const repository = {
       query: jest.fn()
-        .mockResolvedValueOnce({ insertId: 42 })
+        .mockResolvedValueOnce([{ id: 42 }])
         .mockResolvedValueOnce([]),
     };
     const firebaseRepository = { sendMessageToMultipleDevices: jest.fn() };
@@ -32,12 +32,14 @@ describe('ClientRequestsService', () => {
 
     const [insertSql, insertParameters] = repository.query.mock.calls[0];
     expect(insertSql).not.toContain(injectedText);
+    expect(insertSql).toContain('RETURNING id');
+    expect(insertSql).toContain('ST_MakePoint($5, $6)');
     expect(insertParameters).toContain(injectedText);
-    expect(insertParameters).toContain('POINT(1.25 2.5)');
-    expect(insertParameters).toContain('POINT(3.75 4.5)');
+    expect(insertParameters.slice(4)).toEqual([2.5, 1.25, 4.5, 3.75]);
 
     const [lookupSql, lookupParameters] = repository.query.mock.calls[1];
     expect(lookupSql).not.toContain('1.25');
-    expect(lookupParameters).toContain('POINT(1.25 2.5)');
+    expect(lookupSql).toContain('ST_DWithin');
+    expect(lookupParameters).toEqual([2.5, 1.25, 'DRIVER', 10000]);
   });
 });

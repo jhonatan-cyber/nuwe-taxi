@@ -45,7 +45,7 @@ export class ClientRequests {
 
     @Index({ spatial: true })
     @Column({
-        type: 'point',
+        type: 'geography',
         spatialFeatureType: 'Point',
         srid: 4326,
         nullable: false
@@ -54,7 +54,7 @@ export class ClientRequests {
 
     @Index({ spatial: true })
     @Column({
-        type: 'point',
+        type: 'geography',
         spatialFeatureType: 'Point',
         srid: 4326,
         nullable: false
@@ -68,10 +68,10 @@ export class ClientRequests {
     })
     status: Status
 
-    @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
     created_at: Date;
     
-    @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
+    @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
     updated_at: Date;
 
     @ManyToOne(() => User, (user) => user.id)

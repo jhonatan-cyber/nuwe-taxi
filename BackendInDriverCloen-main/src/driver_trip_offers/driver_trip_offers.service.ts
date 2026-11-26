@@ -11,7 +11,7 @@ export class DriverTripOffersService {
 
     async create(driverTripOffer: CreateDriverTripOffersDto, driverId: number) {
         const [request] = await this.driverTripOffersRepository.query(
-            'SELECT id, id_client FROM client_requests WHERE id = ? AND status = ?',
+            'SELECT id, id_client FROM client_requests WHERE id = $1 AND status = $2',
             [driverTripOffer.id_client_request, 'CREATED'],
         );
         if (!request) throw new NotFoundException('Solicitud no disponible');
@@ -38,15 +38,15 @@ export class DriverTripOffersService {
             DTO.distance,
             DTO.updated_at,
             DTO.created_at,
-            JSON_OBJECT(
-                "name", U.name,
-                "lastname", U.lastname,
-                "image", U.image
+            json_build_object(
+                'name', U.name,
+                'lastname', U.lastname,
+                'image', U.image
             ) AS driver,
-            JSON_OBJECT(
-                "brand", DCI.brand,
-                "plate", DCI.plate,
-                "color", DCI.color
+            json_build_object(
+                'brand', DCI.brand,
+                'plate', DCI.plate,
+                'color', DCI.color
             ) AS car
         FROM
             driver_trip_offers AS DTO
@@ -59,10 +59,10 @@ export class DriverTripOffersService {
         ON
             DCI.id_driver = DTO.id_driver
         WHERE
-            DTO.id_client_request = ?
+            DTO.id_client_request = $1
             AND EXISTS (
                 SELECT 1 FROM client_requests AS CR
-                WHERE CR.id = DTO.id_client_request AND CR.id_client = ?
+                WHERE CR.id = DTO.id_client_request AND CR.id_client = $2
             )
 
         `, [id_client_request, clientId]);

@@ -87,15 +87,19 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     await this.driversPosition.query(`
       INSERT INTO drivers_position (id_driver, position)
-      VALUES (?, ST_GeomFromText(?, 4326))
-      ON DUPLICATE KEY UPDATE position = VALUES(position)
-    `, [user.userId, `POINT(${latitude} ${longitude})`]);
+      VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography)
+      ON CONFLICT (id_driver) DO UPDATE SET position = EXCLUDED.position
+    `, [user.userId, longitude, latitude]);
 
     const nearbyRequests = await this.clientRequests.query(`
       SELECT id_client FROM client_requests
-      WHERE status = ?
-        AND ST_Distance_Sphere(pickup_position, ST_GeomFromText(?, 4326)) <= ?
-    `, [Status.CREATED, `POINT(${latitude} ${longitude})`, 5000]);
+      WHERE status = $1
+        AND ST_DWithin(
+          pickup_position,
+          ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+          $4
+        )
+    `, [Status.CREATED, longitude, latitude, 5000]);
     for (const request of nearbyRequests) {
       this.server.to(`user:${request.id_client}`).emit('new_driver_position', {
         id_socket: client.id,

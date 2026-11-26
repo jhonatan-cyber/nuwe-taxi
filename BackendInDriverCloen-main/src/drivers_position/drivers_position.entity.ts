@@ -10,7 +10,7 @@ export class DriversPosition {
 
     @Index({ spatial: true })
     @Column({
-        type: 'point',
+        type: 'geography',
         spatialFeatureType: 'Point',
         srid: 4326,
         nullable: false
